@@ -38,6 +38,8 @@ jobs:
       - name: 產生文章
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PYTHONUNBUFFERED: "1"   # print 立刻出現在 log
+          PYTHONUNBUFFERED: "1"   # 讓 print 即時出現在 Actions 紀錄
         run: python generator.py --news -n ${{ inputs.count || vars.FARM_PER_RUN || '6' }}
 
       - name: 把新文章存回 repo

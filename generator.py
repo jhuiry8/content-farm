@@ -73,7 +73,11 @@ def build_news_prompt(headline, persona):
 def generate_with_gemini(prompt):
     from google import genai
 
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    # 設逾時（毫秒），不然 Gemini 卡住時會一直等到 Actions 的 30 分鐘上限
+    client = genai.Client(
+        api_key=os.environ["GEMINI_API_KEY"],
+        http_options={"timeout": 120_000},
+    )
     interaction = client.interactions.create(
         model=MODEL,
         input=prompt,
