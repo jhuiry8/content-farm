@@ -13,6 +13,7 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  models: read   # 讓 GITHUB_TOKEN 能呼叫 GitHub Models（免費）
 
 concurrency:
   group: farm
@@ -37,7 +38,13 @@ jobs:
 
       - name: 產生文章
         env:
+          # 各家免費 API，沒設的 Secret 會是空字串，程式會自動略過那一家
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONUNBUFFERED: "1"   # 讓 print 即時出現在 Actions 紀錄
         run: python generator.py --news -n ${{ inputs.count || vars.FARM_PER_RUN || '6' }}
 
@@ -47,6 +54,7 @@ jobs:
           git config user.email "farm-bot@users.noreply.github.com"
           git add farm.db
           git commit -m "農場產文 $(date -u +%F_%H%M)" || echo "沒有新文章"
+          git pull --rebase   # 跑的途中有人推程式碼也不會推不上去
           git push
 
       - name: 匯出靜態網站

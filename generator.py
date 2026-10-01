@@ -1,7 +1,6 @@
 """內容農場文章產生器。
 
-有 GEMINI_API_KEY 就呼叫 Google Gemini（免費額度）；沒有就用內建模板離線亂湊。
-金鑰到 https://aistudio.google.com/apikey 免費申請。
+有設任何一家免費 API 的金鑰（見 PROVIDERS）就輪流呼叫；都沒有就用內建模板離線亂湊。
 
     python generator.py -n 5            # 產 5 篇
     python generator.py -n 3 -k 喝水     # 指定關鍵字
@@ -10,9 +9,12 @@
 """
 
 import argparse
+import json
 import os
 import random
 import time
+import urllib.error
+import urllib.request
 
 from pydantic import BaseModel
 
@@ -32,13 +34,34 @@ PERSONAS = [
     "過度熱情的直銷上線",
 ]
 
-# 免費模型的額度是「每個模型分開算」（例如 gemini-3.8-flash 一天只有 20 次），
-# 所以照順序輪流用，用完一個換下一個。可用 FARM_MODELS="a,b,c" 覆寫。
+# 各家免費 API。除了 Gemini，其他都是 OpenAI 相容格式（POST {base}/chat/completions）。
+# 沒設金鑰的那家會自動略過，所以只申請其中幾家也能跑。
+PROVIDERS = {
+    "gemini": {"env": "GEMINI_API_KEY"},  # https://aistudio.google.com/apikey
+    "groq": {"env": "GROQ_API_KEY", "base": "https://api.groq.com/openai/v1"},  # https://console.groq.com/keys
+    "mistral": {"env": "MISTRAL_API_KEY", "base": "https://api.mistral.ai/v1"},  # https://console.mistral.ai/api-keys
+    "zhipu": {"env": "ZHIPU_API_KEY", "base": "https://open.bigmodel.cn/api/paas/v4"},  # https://open.bigmodel.cn
+    "openrouter": {"env": "OPENROUTER_API_KEY", "base": "https://openrouter.ai/api/v1"},  # https://openrouter.ai/keys
+    # Actions 內建的 GITHUB_TOKEN 就能用（workflow 要給 models: read 權限），不用另外申請
+    "github": {"env": "GITHUB_TOKEN", "base": "https://models.github.ai/inference"},
+}
+
+# 免費額度大多是「每個模型分開算」（例如 gemini-3.8-flash 一天只有 20 次），
+# 所以照順序輪流用，用完一個換下一個。可用 FARM_MODELS="供應商:模型,..." 覆寫（沒寫供應商 = gemini）。
 DEFAULT_MODELS = [
-    "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash",
-    "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite",
+    "gemini:gemini-3.8-flash", "gemini:gemini-3.7-flash", "gemini:gemini-3.6-flash",
+    "groq:openai/gpt-oss-120b", "groq:llama-3.3-70b-versatile",
+    "mistral:mistral-large-latest", "zhipu:glm-4.7-flash", "github:openai/gpt-4.1",
+    "gemini:gemini-3.5-flash", "gemini:gemini-2.5-flash",
+    "mistral:mistral-small-latest", "zhipu:glm-4-flash", "github:openai/gpt-4.1-mini",
+    "openrouter:meta-llama/llama-3.3-70b-instruct:free",
+    "gemini:gemini-3.5-flash-lite", "gemini:gemini-3.1-flash-lite", "gemini:gemini-2.5-flash-lite",
 ]
-MODELS = [m.strip() for m in os.environ.get("FARM_MODELS", ",".join(DEFAULT_MODELS)).split(",") if m.strip()]
+MODELS = [
+    m if m.split(":", 1)[0] in PROVIDERS else f"gemini:{m}"
+    for m in (m.strip() for m in os.environ.get("FARM_MODELS", ",".join(DEFAULT_MODELS)).split(","))
+    if m
+]
 exhausted = set()  # 這次執行中已經用完額度（或不能用）的模型
 
 
@@ -112,14 +135,50 @@ def call_gemini(model, prompt):
     return Article.model_validate_json(interaction.output_text)
 
 
+JSON_HINT = '\n\n只輸出一個 JSON 物件，不要任何其他文字：{"title": "標題", "content": "內文"}'
+
+
+def call_openai_compat(provider, model, prompt):
+    p = PROVIDERS[provider]
+    req = urllib.request.Request(
+        f"{p['base']}/chat/completions",
+        data=json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt + JSON_HINT}],
+            "response_format": {"type": "json_object"},
+        }).encode(),
+        headers={"Authorization": f"Bearer {os.environ[p['env']]}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:  # 把錯誤內容帶出來，才看得出是額度用完還是模型名稱錯
+        raise RuntimeError(f"{e.code} {e.read().decode(errors='replace')}") from None
+    text = data["choices"][0]["message"]["content"].strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```")  # 有些模型會包 code block
+    return Article.model_validate_json(text)
+
+
+def call_model(entry, prompt):
+    provider, model = entry.split(":", 1)
+    if provider == "gemini":
+        return call_gemini(model, prompt)
+    return call_openai_compat(provider, model, prompt)
+
+
+def available_models():
+    """有設金鑰的那幾家的模型。"""
+    return [m for m in MODELS if os.environ.get(PROVIDERS[m.split(":", 1)[0]]["env"])]
+
+
 def generate_with_gemini(prompt):
-    """輪流試免費模型，回傳 (模型名稱, 文章)；全部都不行就回傳 None。"""
-    for model in MODELS:
+    """輪流試各家免費模型，回傳 (模型名稱, 文章)；全部都不行就回傳 None。"""
+    for model in available_models():
         if model in exhausted:
             continue
         for attempt in range(2):
             try:
-                return model, call_gemini(model, prompt)
+                return model, call_model(model, prompt)
             except Exception as e:
                 msg = str(e)
                 print(f"  {model} 失敗：{msg[:160]}")
@@ -210,7 +269,7 @@ def generate_offline_news(headline, persona):
 
 
 def has_credentials():
-    return bool(os.environ.get("GEMINI_API_KEY"))
+    return bool(available_models())
 
 
 def generate_one(keyword=None, offline=False, headline=None):
@@ -264,7 +323,7 @@ def main():
         article_id = generate_one(args.keyword, args.offline, headlines[i] if headlines else None)
         if article_id is None:
             print(f"[{i + 1}/{n}] 跳過")
-            if len(exhausted) == len(MODELS):
+            if len(exhausted) == len(available_models()):
                 print("所有免費模型今天的額度都用完了，先停")
                 break
         else:
