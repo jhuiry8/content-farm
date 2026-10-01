@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="heading">{{ heading }}</h2>
+{% for a in articles %}
+  <a class="card" href="{{ url_for('article', article_id=a.id) }}">
+    <div class="thumb">{{ a.keyword[:2] }}</div>
+    <div>
+      <h3>{{ a.title }}</h3>
+      <p class="meta">#{{ a.keyword }} ‧ {{ a.persona }}{% if not static_site %} ‧ 👀 {{ a.views }}{% endif %}</p>
+    </div>
+  </a>
+{% else %}
+  <p class="empty">還沒有文章。執行 <code>python generator.py -n 5</code> 或用右邊按鈕開始量產。</p>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}震驚網{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="{{ url_for('index') }}">😱 震驚網</a>
+    <span class="slogan">99% 的人都不知道的冷知識</span>
+  </header>
+  <div class="marquee"><span>🔥 獨家！小編熬夜整理 ‧ 看完記得分享 ‧ 不轉不是台灣人 🔥</span></div>
+
+  <div class="layout">
+    <main>{% block content %}{% endblock %}</main>
+
+    <aside>
+      <section class="box">
+        <h3>🔥 熱門文章</h3>
+        <ol>{% for h in hot %}<li><a href="{{ url_for('article', article_id=h.id) }}">{{ h.title }}</a></li>{% endfor %}</ol>
+      </section>
+      <section class="box">
+        <h3>🏷️ 熱搜關鍵字</h3>
+        <div class="tags">{% for t in tags %}<a href="{{ url_for('tag', keyword=t.keyword) }}">#{{ t.keyword }} ({{ t.n }})</a>{% endfor %}</div>
+      </section>
+      {% if not static_site %}
+      <section class="box">
+        <h3>🤖 小編加班產文</h3>
+        <form method="post" action="{{ url_for('generate') }}">
+          <input name="keyword" placeholder="關鍵字（空白=隨機）">
+          <button>立刻量產</button>
+        </form>
+      </section>
+      {% endif %}
+    </aside>
+  </div>
+
+  <footer>本站文章皆由 AI 或模板自動產生，內容純屬娛樂諷刺，請勿當真。</footer>
+</body>
+</html>

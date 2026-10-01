@@ -1,0 +1,36 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif; background: #fff8e7; color: #222; }
+a { color: inherit; }
+
+.top { background: #d7263d; color: #fff; padding: 14px 20px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.logo { font-size: 28px; font-weight: 900; text-decoration: none; }
+.slogan { color: #ffe66d; font-weight: bold; }
+
+.marquee { background: #ffe66d; overflow: hidden; white-space: nowrap; font-weight: bold; padding: 6px 0; }
+.marquee span { display: inline-block; padding-left: 100%; animation: scroll 15s linear infinite; }
+@keyframes scroll { to { transform: translateX(-100%); } }
+
+.layout { max-width: 1100px; margin: 20px auto; padding: 0 16px; display: grid; grid-template-columns: 1fr 300px; gap: 20px; }
+@media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+
+.heading { border-left: 6px solid #d7263d; padding-left: 10px; }
+.card { display: flex; gap: 14px; background: #fff; border-radius: 8px; padding: 12px; margin-bottom: 12px; text-decoration: none; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+.card:hover h3 { color: #d7263d; }
+.card h3 { margin: 0 0 6px; font-size: 18px; }
+.thumb { flex: 0 0 80px; height: 80px; border-radius: 6px; background: linear-gradient(135deg, #d7263d, #f49d37); color: #fff; font-size: 26px; font-weight: 900; display: grid; place-items: center; }
+.meta { color: #777; font-size: 13px; margin: 0; }
+.empty { background: #fff; padding: 20px; border-radius: 8px; }
+
+.post { background: #fff; border-radius: 8px; padding: 24px; line-height: 1.9; font-size: 17px; }
+.post h1 { color: #d7263d; line-height: 1.4; }
+.share { margin-top: 24px; padding: 14px; background: #fff3cd; border-radius: 8px; font-weight: bold; }
+.share button, aside button { background: #d7263d; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-weight: bold; cursor: pointer; }
+
+.box { background: #fff; border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+.box h3 { margin-top: 0; }
+.box ol { padding-left: 20px; margin: 0; }
+.box li { margin-bottom: 8px; font-size: 14px; }
+.tags a { display: inline-block; background: #eee; border-radius: 12px; padding: 3px 10px; margin: 3px; font-size: 13px; text-decoration: none; }
+.box input { width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 6px; }
+
+footer { text-align: center; color: #888; font-size: 13px; padding: 30px 16px; }

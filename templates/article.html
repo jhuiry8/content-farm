@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ a.title }} - 震驚網{% endblock %}
+{% block content %}
+<article class="post">
+  <h1>{{ a.title }}</h1>
+  <p class="meta">
+    <a href="{{ url_for('tag', keyword=a.keyword) }}">#{{ a.keyword }}</a>
+    ‧ 作者：{{ a.persona }} ‧ {{ a.created_at[:10] }}{% if not static_site %} ‧ 👀 {{ a.views }}{% endif %} ‧ 來源：{{ a.source }}
+  </p>
+  {% for p in paragraphs %}<p>{{ p }}</p>{% endfor %}
+  <div class="share">👉 覺得有用嗎？<button onclick="navigator.clipboard.writeText(location.href);this.textContent='已複製連結！快分享！'">複製連結分享給長輩</button></div>
+</article>
+{% endblock %}
