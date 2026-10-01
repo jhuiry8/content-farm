@@ -6,16 +6,18 @@ from itertools import zip_longest
 
 PARAMS = "hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
 FEEDS = {
+    "娛樂": f"https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?{PARAMS}",
     "焦點": f"https://news.google.com/rss?{PARAMS}",
     "台灣": f"https://news.google.com/rss/headlines/section/topic/NATION?{PARAMS}",
     "國際": f"https://news.google.com/rss/headlines/section/topic/WORLD?{PARAMS}",
     "財經": f"https://news.google.com/rss/headlines/section/topic/BUSINESS?{PARAMS}",
     "科技": f"https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?{PARAMS}",
-    "娛樂": f"https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?{PARAMS}",
     "體育": f"https://news.google.com/rss/headlines/section/topic/SPORTS?{PARAMS}",
     "科學": f"https://news.google.com/rss/headlines/section/topic/SCIENCE?{PARAMS}",
     "健康": f"https://news.google.com/rss/headlines/section/topic/HEALTH?{PARAMS}",
 }
+# 每輪從該分類拿幾則，沒列的拿 1 則（八卦比較有農場味，多拿一點）
+WEIGHTS = {"娛樂": 2}
 
 
 def fetch_feed(category, url):
@@ -35,18 +37,21 @@ def fetch_feed(category, url):
 
 
 def fetch_headlines():
-    """所有分類的頭條，各分類輪流排（焦點第1則、台灣第1則…焦點第2則…），網址重複的只留一則。"""
+    """所有分類的頭條，各分類輪流排（娛樂第1、2則、焦點第1則…娛樂第3、4則…），網址重複的只留一則。"""
     feeds = []
     for category, url in FEEDS.items():
         try:
-            feeds.append(fetch_feed(category, url))
+            items = fetch_feed(category, url)
         except Exception as e:
             print(f"  抓不到 {category} 新聞：{e}")
+            continue
+        w = WEIGHTS.get(category, 1)
+        feeds.append([items[i : i + w] for i in range(0, len(items), w)])
 
     seen, result = set(), []
-    for row in zip_longest(*feeds):
-        for h in row:
-            if h and h["url"] not in seen:
+    for row in zip_longest(*feeds, fillvalue=[]):
+        for h in (h for chunk in row for h in chunk):
+            if h["url"] not in seen:
                 seen.add(h["url"])
                 result.append(h)
     return result
