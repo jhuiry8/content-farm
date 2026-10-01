@@ -28,7 +28,9 @@ def article(article_id):
     art = db.get_article(article_id, count_view=not app.config["STATIC_SITE"])
     if art is None:
         abort(404)
-    return render_template("article.html", a=art, paragraphs=art["content"].split("\n\n"))
+    return render_template(
+        "article.html", a=art, paragraphs=art["content"].split("\n\n"), comments=db.list_comments(article_id)
+    )
 
 
 @app.route("/generate", methods=["POST"])

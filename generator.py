@@ -15,6 +15,7 @@ import random
 import time
 import urllib.error
 import urllib.request
+from itertools import zip_longest
 
 from pydantic import BaseModel
 
@@ -47,7 +48,7 @@ PROVIDERS = {
 }
 
 # 免費額度大多是「每個模型分開算」（例如 gemini-3.8-flash 一天只有 20 次），
-# 所以照順序輪流用，用完一個換下一個。可用 FARM_MODELS="供應商:模型,..." 覆寫（沒寫供應商 = gemini）。
+# 所以每篇換下一家輪流用（各家交錯排），額度用完的就跳過。可用 FARM_MODELS="供應商:模型,..." 覆寫（沒寫供應商 = gemini）。
 DEFAULT_MODELS = [
     "gemini:gemini-3.8-flash", "gemini:gemini-3.7-flash", "gemini:gemini-3.6-flash",
     "groq:openai/gpt-oss-120b", "groq:llama-3.3-70b-versatile",
@@ -68,6 +69,18 @@ exhausted = set()  # 這次執行中已經用完額度（或不能用）的模�
 class Article(BaseModel):
     title: str
     content: str
+
+
+class Review(BaseModel):
+    approved: bool
+    reason: str
+
+
+class Comments(BaseModel):
+    comments: list[str]  # 每則格式：「暱稱：留言」
+
+
+MIN_LENGTH = 800  # 內文少於這個字數直接退件，不用麻煩審核員
 
 
 def build_prompt(keyword, persona):
@@ -115,7 +128,34 @@ def build_news_prompt(headline, persona):
     )
 
 
-def call_gemini(model, prompt):
+def build_review_prompt(art, headline):
+    src = f"這篇是針對新聞標題『{headline['title']}』寫的評論吐槽文。\n" if headline else ""
+    return (
+        "你是「諷刺性質」內容農場的審核員。農場文本來就浮誇、廢話多、標題震驚體，這些都沒問題，不要因此退件。\n"
+        + src
+        + "只有下列情況要退件（approved=false），並在 reason 用一句話說明：\n"
+        "1. 把標題沒有的事實、數字、引言、後續發展當成真的新聞來寫（明顯是小編感想或網友A/B的虛構抬槓不算）。\n"
+        "2. 腦補真實人物的感情、私生活、外貌身材，或替真實人物捏造發言。\n"
+        "3. 嘲諷災難、意外、犯罪、疾病的受害者，或有歧視、仇恨內容。\n"
+        "4. 給出危險或錯誤的健康、金融建議。\n"
+        "5. 不是繁體中文，或內容斷掉、明顯沒寫完。\n"
+        "其他情況一律通過（approved=true，reason 寫一句短評）。\n\n"
+        f"標題：{art.title}\n\n內文：\n{art.content}"
+    )
+
+
+def build_comments_prompt(art):
+    return (
+        "下面是一篇「諷刺性質」內容農場的文章。請扮演 5～8 個個性不同的虛構網友，在文章底下留言，"
+        "有人被唬住、有人吐槽、有人離題、有人互相抬槓，像台灣網路留言區那樣，每則一兩句。\n"
+        "暱稱自己編（像 PTT／臉書網友那樣），不可以用真實人物的名字，也不可以替真實人物發言；"
+        "不要捏造文章裡沒有的新聞事實。\n"
+        "comments 每一則的格式是「暱稱：留言內容」。\n\n"
+        f"標題：{art.title}\n\n內文：\n{art.content[:3000]}"
+    )
+
+
+def call_gemini(model, prompt, schema=Article):
     from google import genai
 
     # 設逾時（毫秒），不然 Gemini 卡住時會一直等到 Actions 的 30 分鐘上限
@@ -129,22 +169,26 @@ def call_gemini(model, prompt):
         response_format={
             "type": "text",
             "mime_type": "application/json",
-            "schema": Article.model_json_schema(),
+            "schema": schema.model_json_schema(),
         },
     )
-    return Article.model_validate_json(interaction.output_text)
+    return schema.model_validate_json(interaction.output_text)
 
 
-JSON_HINT = '\n\n只輸出一個 JSON 物件，不要任何其他文字：{"title": "標題", "content": "內文"}'
+JSON_HINTS = {
+    Article: '{"title": "標題", "content": "內文"}',
+    Review: '{"approved": true, "reason": "一句話"}',
+    Comments: '{"comments": ["暱稱：留言", "暱稱：留言"]}',
+}
 
 
-def call_openai_compat(provider, model, prompt):
+def call_openai_compat(provider, model, prompt, schema=Article):
     p = PROVIDERS[provider]
     req = urllib.request.Request(
         f"{p['base']}/chat/completions",
         data=json.dumps({
             "model": model,
-            "messages": [{"role": "user", "content": prompt + JSON_HINT}],
+            "messages": [{"role": "user", "content": f"{prompt}\n\n只輸出一個 JSON 物件，不要任何其他文字：{JSON_HINTS[schema]}"}],
             "response_format": {"type": "json_object"},
         }).encode(),
         headers={"Authorization": f"Bearer {os.environ[p['env']]}", "Content-Type": "application/json"},
@@ -156,29 +200,52 @@ def call_openai_compat(provider, model, prompt):
         raise RuntimeError(f"{e.code} {e.read().decode(errors='replace')}") from None
     text = data["choices"][0]["message"]["content"].strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```")  # 有些模型會包 code block
-    return Article.model_validate_json(text)
+    return schema.model_validate_json(text)
 
 
-def call_model(entry, prompt):
+def provider_of(entry):
+    return entry.split(":", 1)[0]
+
+
+def call_model(entry, prompt, schema=Article):
     provider, model = entry.split(":", 1)
     if provider == "gemini":
-        return call_gemini(model, prompt)
-    return call_openai_compat(provider, model, prompt)
+        return call_gemini(model, prompt, schema)
+    return call_openai_compat(provider, model, prompt, schema)
 
 
 def available_models():
-    """有設金鑰的那幾家的模型。"""
-    return [m for m in MODELS if os.environ.get(PROVIDERS[m.split(":", 1)[0]]["env"])]
+    """有設金鑰的那幾家的模型，各家交錯排（gemini 第1個、groq 第1個…gemini 第2個…）。"""
+    groups = {}
+    for m in MODELS:
+        if os.environ.get(PROVIDERS[provider_of(m)]["env"]):
+            groups.setdefault(provider_of(m), []).append(m)
+    return [m for row in zip_longest(*groups.values()) for m in row if m]
 
 
-def generate_with_gemini(prompt):
-    """輪流試各家免費模型，回傳 (模型名稱, 文章)；全部都不行就回傳 None。"""
-    for model in available_models():
+next_start = 0  # 下一次從清單的第幾個開始試，每用一次就往後挪，讓各家各模型輪流
+
+
+def ask_models(prompt, schema=Article, avoid_provider=None):
+    """輪流試各家免費模型，回傳 (模型名稱, 結果)；全部都不行就回傳 None。
+
+    avoid_provider：盡量不要用這一家（審核員和留言不要跟寫手同一家），真的沒別家才用。
+    """
+    global next_start
+    models = available_models()
+    if not models:
+        return None
+    k = next_start % len(models)
+    order = models[k:] + models[:k]
+    order.sort(key=lambda m: provider_of(m) == avoid_provider)  # 穩定排序：同一家的移到最後
+    for model in order:
         if model in exhausted:
             continue
         for attempt in range(2):
             try:
-                return model, call_model(model, prompt)
+                result = call_model(model, prompt, schema)
+                next_start = models.index(model) + 1
+                return model, result
             except Exception as e:
                 msg = str(e)
                 print(f"  {model} 失敗：{msg[:160]}")
@@ -189,6 +256,44 @@ def generate_with_gemini(prompt):
                     exhausted.add(model)  # 今天額度用完或這個模型不能用
                 break  # 這篇先換下一個模型
     return None
+
+
+def write_reviewed_article(prompt, headline, tries=3):
+    """寫文章 → 審核員審稿，退件就換別的模型重寫。回傳 (寫手, 文章, 審核員, 短評) 或 None。"""
+    for _ in range(tries):
+        result = ask_models(prompt)
+        if result is None:
+            return None
+        writer, art = result
+        if len(art.content) < MIN_LENGTH:
+            print(f"  退件（{writer}）：內文只有 {len(art.content)} 字")
+            continue
+        review = ask_models(build_review_prompt(art, headline), Review, avoid_provider=provider_of(writer))
+        if review is None:
+            print("  找不到審核員（額度都用完了），這篇先不上")
+            return None
+        reviewer, verdict = review
+        if verdict.approved:
+            print(f"  {writer} 寫、{reviewer} 審核通過：{verdict.reason[:60]}")
+            return writer, art, reviewer, verdict.reason
+        print(f"  退件（{writer} 寫、{reviewer} 審）：{verdict.reason[:100]}")
+    return None
+
+
+def make_comments(art, writer):
+    """虛擬網友留言，失敗就算了（文章照樣上）。回傳 (模型, [(暱稱, 留言), ...])。"""
+    result = ask_models(build_comments_prompt(art), Comments, avoid_provider=provider_of(writer))
+    if result is None:
+        return None, []
+    model, c = result
+    pairs = []
+    for line in c.comments:
+        name, sep, text = line.partition("：")
+        if not sep:
+            name, sep, text = line.partition(":")
+        if sep and name.strip() and text.strip():
+            pairs.append((name.strip()[:20], text.strip()))
+    return model, pairs
 
 
 # ---------- 離線模板：不用 API，純靠排列組合 ----------
@@ -288,11 +393,18 @@ def generate_one(keyword=None, offline=False, headline=None):
         news_fields = {}
 
     if not offline and has_credentials():
-        result = generate_with_gemini(prompt)
+        result = write_reviewed_article(prompt, headline)
         if result is None:
             return None
-        model, art = result
-        return db.add_article(keyword, persona, art.title, art.content, model, **news_fields)
+        writer, art, reviewer, note = result
+        article_id = db.add_article(
+            keyword, persona, art.title, art.content, writer, reviewer=reviewer, review_note=note, **news_fields
+        )
+        commenter, comments = make_comments(art, writer)
+        if comments:
+            db.add_comments(article_id, comments, commenter)
+            print(f"  {commenter} 留了 {len(comments)} 則留言")
+        return article_id
 
     art = generate_offline_news(headline, persona) if headline else generate_offline(keyword, persona)
     return db.add_article(keyword, persona, art.title, art.content, "offline-template", **news_fields)

@@ -11,6 +11,18 @@
   <p class="news-src">📰 原始新聞：<a href="{{ a.news_url }}" target="_blank" rel="noopener">{{ a.news_title }}</a></p>
   {% endif %}
   {% for p in paragraphs %}<p>{{ p }}</p>{% endfor %}
+  {% if a.reviewer %}
+  <p class="review">✅ 審核員 {{ a.reviewer }}：{{ a.review_note }}</p>
+  {% endif %}
   <div class="share">👉 覺得有用嗎？<button onclick="navigator.clipboard.writeText(location.href);this.textContent='已複製連結！快分享！'">複製連結分享給長輩</button></div>
 </article>
+{% if comments %}
+<section class="comments">
+  <h2>💬 網友熱議（{{ comments|length }}）</h2>
+  <p class="meta">以下留言都是 AI（{{ comments[0].source }}）扮演的虛擬網友，不是真實讀者。</p>
+  {% for c in comments %}
+  <div class="comment"><b>{{ c.nickname }}</b><p>{{ c.content }}</p></div>
+  {% endfor %}
+</section>
+{% endif %}
 {% endblock %}

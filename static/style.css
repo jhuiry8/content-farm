@@ -35,3 +35,9 @@ a { color: inherit; }
 
 footer { text-align: center; color: #888; font-size: 13px; padding: 30px 16px; }
 .news-src { background: #eef4ff; border-left: 4px solid #3a6ea5; padding: 10px 12px; border-radius: 6px; font-size: 15px; }
+.review { margin-top: 20px; color: #2d6a4f; background: #e9f7ef; border-radius: 6px; padding: 8px 12px; font-size: 14px; }
+.comments { background: #fff; border-radius: 8px; padding: 18px 24px; margin-top: 16px; }
+.comments h2 { margin: 0 0 4px; font-size: 20px; }
+.comment { border-top: 1px solid #eee; padding: 10px 0; }
+.comment b { color: #3a6ea5; }
+.comment p { margin: 4px 0 0; }
