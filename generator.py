@@ -32,7 +32,14 @@ PERSONAS = [
     "過度熱情的直銷上線",
 ]
 
-MODEL = os.environ.get("FARM_MODEL", "gemini-3.8-flash")
+# 免費模型的額度是「每個模型分開算」（例如 gemini-3.8-flash 一天只有 20 次），
+# 所以照順序輪流用，用完一個換下一個。可用 FARM_MODELS="a,b,c" 覆寫。
+DEFAULT_MODELS = [
+    "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash",
+    "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite",
+]
+MODELS = [m.strip() for m in os.environ.get("FARM_MODELS", ",".join(DEFAULT_MODELS)).split(",") if m.strip()]
+exhausted = set()  # 這次執行中已經用完額度（或不能用）的模型
 
 
 class Article(BaseModel):
@@ -70,7 +77,7 @@ def build_news_prompt(headline, persona):
     )
 
 
-def generate_with_gemini(prompt):
+def call_gemini(model, prompt):
     from google import genai
 
     # 設逾時（毫秒），不然 Gemini 卡住時會一直等到 Actions 的 30 分鐘上限
@@ -79,7 +86,7 @@ def generate_with_gemini(prompt):
         http_options={"timeout": 120_000},
     )
     interaction = client.interactions.create(
-        model=MODEL,
+        model=model,
         input=prompt,
         response_format={
             "type": "text",
@@ -88,6 +95,25 @@ def generate_with_gemini(prompt):
         },
     )
     return Article.model_validate_json(interaction.output_text)
+
+
+def generate_with_gemini(prompt):
+    """輪流試免費模型，回傳 (模型名稱, 文章)；全部都不行就回傳 None。"""
+    for model in MODELS:
+        if model in exhausted:
+            continue
+        for attempt in range(2):
+            try:
+                return model, call_gemini(model, prompt)
+            except Exception as e:
+                msg = str(e)
+                print(f"  {model} 失敗：{msg[:160]}")
+                if "429" in msg and "per day" not in msg and attempt == 0:
+                    time.sleep(60)  # 每分鐘上限：等一分鐘再試同一個模型
+                    continue
+                exhausted.add(model)  # 今天額度用完或這個模型不能用，換下一個
+                break
+    return None
 
 
 # ---------- 離線模板：不用 API，純靠排列組合 ----------
@@ -171,7 +197,7 @@ def has_credentials():
     return bool(os.environ.get("GEMINI_API_KEY"))
 
 
-def generate_one(keyword=None, offline=False, headline=None, retries=2):
+def generate_one(keyword=None, offline=False, headline=None):
     """headline 是 news.fetch_headlines() 的一筆；有給就寫時事評論，沒給就用關鍵字。
 
     有金鑰時 Gemini 失敗就回傳 None（跳過，不寫模板廢文，新聞下次還能再寫）。
@@ -187,15 +213,11 @@ def generate_one(keyword=None, offline=False, headline=None, retries=2):
         news_fields = {}
 
     if not offline and has_credentials():
-        for attempt in range(retries + 1):
-            try:
-                art = generate_with_gemini(prompt)
-                return db.add_article(keyword, persona, art.title, art.content, MODEL, **news_fields)
-            except Exception as e:  # 免費額度撞到每分鐘上限會 429，等一分鐘左右再試
-                print(f"  Gemini 失敗（第 {attempt + 1} 次）：{str(e)[:200]}")
-                if attempt < retries:
-                    time.sleep(30 * (attempt + 1))
-        return None
+        result = generate_with_gemini(prompt)
+        if result is None:
+            return None
+        model, art = result
+        return db.add_article(keyword, persona, art.title, art.content, model, **news_fields)
 
     art = generate_offline_news(headline, persona) if headline else generate_offline(keyword, persona)
     return db.add_article(keyword, persona, art.title, art.content, "offline-template", **news_fields)
@@ -222,17 +244,14 @@ def main():
             return
         n = len(headlines)
 
-    failures = 0
     for i in range(n):
         article_id = generate_one(args.keyword, args.offline, headlines[i] if headlines else None)
         if article_id is None:
-            failures += 1
             print(f"[{i + 1}/{n}] 跳過")
-            if failures >= 3:
-                print("連續失敗 3 次，大概是今天的免費額度用完了，先停")
+            if len(exhausted) == len(MODELS):
+                print("所有免費模型今天的額度都用完了，先停")
                 break
         else:
-            failures = 0
             print(f"[{i + 1}/{n}] 已產生文章 #{article_id}")
         if i < n - 1:
             time.sleep(args.sleep)
