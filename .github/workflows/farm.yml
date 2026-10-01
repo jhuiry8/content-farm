@@ -2,12 +2,12 @@ name: 農場自動產文
 
 on:
   schedule:
-    - cron: "0 0,12 * * *"   # 每天台灣時間 08:00、20:00
+    - cron: "17 */2 * * *"   # 每 2 小時（避開整點，GitHub 整點排程常延遲）
   workflow_dispatch:
     inputs:
       count:
-        description: "這次產幾篇"
-        default: "3"
+        description: "這次產幾篇（空白 = 用 FARM_PER_RUN 變數，預設 6）"
+        default: ""
 
 permissions:
   contents: write
@@ -21,6 +21,7 @@ concurrency:
 jobs:
   farm:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -37,7 +38,7 @@ jobs:
       - name: 產生文章
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python generator.py --news -n ${{ inputs.count || '3' }}
+        run: python generator.py --news -n ${{ inputs.count || vars.FARM_PER_RUN || '6' }}
 
       - name: 把新文章存回 repo
         run: |

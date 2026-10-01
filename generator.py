@@ -168,10 +168,13 @@ def has_credentials():
 
 
 def generate_one(keyword=None, offline=False, headline=None, retries=2):
-    """headline 是 news.fetch_headlines() 的一筆；有給就寫時事評論，沒給就用關鍵字。"""
+    """headline 是 news.fetch_headlines() 的一筆；有給就寫時事評論，沒給就用關鍵字。
+
+    有金鑰時 Gemini 失敗就回傳 None（跳過，不寫模板廢文，新聞下次還能再寫）。
+    """
     persona = random.choice(PERSONAS)
     if headline:
-        keyword = "時事"
+        keyword = headline["category"]
         prompt = build_news_prompt(headline, persona)
         news_fields = {"news_title": headline["title"], "news_url": headline["url"]}
     else:
@@ -184,10 +187,11 @@ def generate_one(keyword=None, offline=False, headline=None, retries=2):
             try:
                 art = generate_with_gemini(prompt)
                 return db.add_article(keyword, persona, art.title, art.content, MODEL, **news_fields)
-            except Exception as e:  # 免費額度常撞 429，退避後重試
-                print(f"  Gemini 失敗（第 {attempt + 1} 次）：{e}")
-                time.sleep(20 * (attempt + 1))
-        print("  改用離線模板")
+            except Exception as e:  # 免費額度撞到每分鐘上限會 429，等一分鐘左右再試
+                print(f"  Gemini 失敗（第 {attempt + 1} 次）：{str(e)[:200]}")
+                if attempt < retries:
+                    time.sleep(30 * (attempt + 1))
+        return None
 
     art = generate_offline_news(headline, persona) if headline else generate_offline(keyword, persona)
     return db.add_article(keyword, persona, art.title, art.content, "offline-template", **news_fields)
@@ -214,9 +218,18 @@ def main():
             return
         n = len(headlines)
 
+    failures = 0
     for i in range(n):
         article_id = generate_one(args.keyword, args.offline, headlines[i] if headlines else None)
-        print(f"[{i + 1}/{n}] 已產生文章 #{article_id}")
+        if article_id is None:
+            failures += 1
+            print(f"[{i + 1}/{n}] 跳過")
+            if failures >= 3:
+                print("連續失敗 3 次，大概是今天的免費額度用完了，先停")
+                break
+        else:
+            failures = 0
+            print(f"[{i + 1}/{n}] 已產生文章 #{article_id}")
         if i < n - 1:
             time.sleep(args.sleep)
 
