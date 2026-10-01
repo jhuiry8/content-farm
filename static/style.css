@@ -34,3 +34,4 @@ a { color: inherit; }
 .box input { width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 6px; }
 
 footer { text-align: center; color: #888; font-size: 13px; padding: 30px 16px; }
+.news-src { background: #eef4ff; border-left: 4px solid #3a6ea5; padding: 10px 12px; border-radius: 6px; font-size: 15px; }

@@ -37,7 +37,7 @@ jobs:
       - name: 產生文章
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python generator.py -n ${{ inputs.count || '3' }}
+        run: python generator.py --news -n ${{ inputs.count || '3' }}
 
       - name: 把新文章存回 repo
         run: |

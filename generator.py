@@ -6,6 +6,7 @@
     python generator.py -n 5            # 產 5 篇
     python generator.py -n 3 -k 喝水     # 指定關鍵字
     python generator.py -n 10 --offline # 強制離線模板，不花錢
+    python generator.py -n 3 --news     # 抓 Google 新聞頭條當題材
 """
 
 import argparse
@@ -16,6 +17,7 @@ import time
 from pydantic import BaseModel
 
 import db
+import news
 
 KEYWORDS = [
     "喝水", "睡覺", "咖啡", "手機", "走路", "存錢", "早餐", "洗澡", "貓", "冷氣",
@@ -52,13 +54,29 @@ def build_prompt(keyword, persona):
     )
 
 
-def generate_with_gemini(keyword, persona):
+def build_news_prompt(headline, persona):
+    return (
+        f"你是一個「諷刺性質」內容農場的資深編輯，人設是：{persona}。\n"
+        f"今天的新聞標題是：『{headline['title']}』（來源：{headline['source']}）。\n"
+        "請用這個人設寫一篇約 500 字的繁體中文「評論吐槽文」，用來娛樂讀者、諷刺農場文。\n"
+        "規則：\n"
+        "1. 標題要用「震驚體」，例如「看完沉默了」、「網友吵翻」、「真相讓人傻眼」。\n"
+        "2. 你只知道新聞標題，所以只能針對標題本身發表感想與吐槽，"
+        "絕對不可以捏造標題裡沒有的事實、數字、人名、引言或後續發展。\n"
+        "3. 寫成個人評論，不要寫得像新聞報導；不要嘲諷災難、意外、犯罪或疾病的受害者。\n"
+        "4. 結尾提醒讀者去看原始新聞，並呼籲分享。\n"
+        "5. 全程維持人設語氣，越浮誇越好。\n"
+        "content 用純文字，段落之間空一行。"
+    )
+
+
+def generate_with_gemini(prompt):
     from google import genai
 
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     interaction = client.interactions.create(
         model=MODEL,
-        input=build_prompt(keyword, persona),
+        input=prompt,
         response_format={
             "type": "text",
             "mime_type": "application/json",
@@ -78,6 +96,12 @@ TITLE_TEMPLATES = [
     "別再錯誤{k}了！專家：這樣做才是對的（快轉給家人）",
 ]
 
+NEWS_TITLE_TEMPLATES = [
+    "看到「{t}」，小編沉默了…",
+    "「{t}」網友吵翻！看完我只想說一句話",
+    "震驚！「{t}」這則新聞，99%的人都只看標題",
+]
+
 OPENINGS = [
     "說到{k}，相信大家都不陌生。{k}是我們生活中常見的{k}，但你真的了解{k}嗎？其實{k}這件事，就跟{k}一樣，非常重要。",
     "{k}，{k}，又是{k}。每天都有無數的人在{k}，但很少有人停下來想一想：{k}到底是什麼？今天小編就要帶大家深入了解{k}。",
@@ -92,13 +116,20 @@ TIPS = [
     "用心感受：{k}的時候放下手機，專注在當下。",
 ]
 
+NEWS_TIPS = [
+    "先看完全文：只看標題就留言，是農場最喜歡的讀者。",
+    "多看幾家媒體：同一件事，換個標題就像換了一個世界。",
+    "冷靜再分享：轉貼之前，先確認不是去年的舊聞。",
+    "注意來源：截圖不是新聞，長輩群組也不是通訊社。",
+]
+
 ENDINGS = [
     "看完是不是覺得{k}一點都不簡單呢？趕快分享給你最愛的家人朋友，讓更多人知道{k}的秘密！",
     "如果你覺得這篇文章對你有幫助，請按讚分享！不轉不是台灣人！",
 ]
 
 PERSONA_FLAVOR = {
-    "極度酸民的鄉民": "（是說這種常識也要寫一篇，笑死）",
+    "極度酸民的鄉民": "（是說這種東西也要寫一篇，笑死）",
     "中二病末期的少年": "（吾之右手已感應到{k}的封印正在解開…）",
     "愛轉貼長輩圖的阿姨": "（早安🌸平安喜樂🌸記得{k}喔🙏）",
     "自稱前 Google 工程師的成功學講師": "（我在矽谷的時候，大家都這樣{k}。）",
@@ -112,33 +143,54 @@ def generate_offline(keyword, persona):
     paragraphs = [
         random.choice(OPENINGS).format(k=k),
         PERSONA_FLAVOR[persona].format(k=k),
-        "以下整理出 3 個關於{k}的關鍵重點：".format(k=k),
+        f"以下整理出 3 個關於{k}的關鍵重點：",
         *[f"{i}. {t.format(k=k)}" for i, t in enumerate(tips, 1)],
         random.choice(ENDINGS).format(k=k),
     ]
     return Article(title=random.choice(TITLE_TEMPLATES).format(k=k), content="\n\n".join(paragraphs))
 
 
+def generate_offline_news(headline, persona):
+    t = headline["title"]
+    tips = random.sample(NEWS_TIPS, 3)
+    paragraphs = [
+        f"今天的新聞「{t}」，相信大家都看到了。這則新聞，真的是一則新聞。小編看完標題之後，久久不能自已，只能說：這就是新聞啊！",
+        PERSONA_FLAVOR[persona].format(k="看新聞"),
+        "身為專業的農場編輯，小編整理出 3 個看新聞的重點：",
+        *[f"{i}. {tip}" for i, tip in enumerate(tips, 1)],
+        "想知道完整內容，請點上方的原始新聞連結。覺得小編說得有道理，就分享給親朋好友吧！",
+    ]
+    return Article(title=random.choice(NEWS_TITLE_TEMPLATES).format(t=t), content="\n\n".join(paragraphs))
+
+
 def has_credentials():
     return bool(os.environ.get("GEMINI_API_KEY"))
 
 
-def generate_one(keyword=None, offline=False, retries=2):
-    keyword = keyword or random.choice(KEYWORDS)
+def generate_one(keyword=None, offline=False, headline=None, retries=2):
+    """headline 是 news.fetch_headlines() 的一筆；有給就寫時事評論，沒給就用關鍵字。"""
     persona = random.choice(PERSONAS)
+    if headline:
+        keyword = "時事"
+        prompt = build_news_prompt(headline, persona)
+        news_fields = {"news_title": headline["title"], "news_url": headline["url"]}
+    else:
+        keyword = keyword or random.choice(KEYWORDS)
+        prompt = build_prompt(keyword, persona)
+        news_fields = {}
 
     if not offline and has_credentials():
         for attempt in range(retries + 1):
             try:
-                art = generate_with_gemini(keyword, persona)
-                return db.add_article(keyword, persona, art.title, art.content, MODEL)
+                art = generate_with_gemini(prompt)
+                return db.add_article(keyword, persona, art.title, art.content, MODEL, **news_fields)
             except Exception as e:  # 免費額度常撞 429，退避後重試
                 print(f"  Gemini 失敗（第 {attempt + 1} 次）：{e}")
                 time.sleep(20 * (attempt + 1))
         print("  改用離線模板")
 
-    art = generate_offline(keyword, persona)
-    return db.add_article(keyword, persona, art.title, art.content, "offline-template")
+    art = generate_offline_news(headline, persona) if headline else generate_offline(keyword, persona)
+    return db.add_article(keyword, persona, art.title, art.content, "offline-template", **news_fields)
 
 
 def main():
@@ -147,12 +199,23 @@ def main():
     parser.add_argument("-k", "--keyword", help="指定關鍵字，不給就隨機")
     parser.add_argument("--sleep", type=float, default=8.0, help="每篇之間間隔秒數（免費額度有每分鐘上限）")
     parser.add_argument("--offline", action="store_true", help="不呼叫 API，只用模板")
+    parser.add_argument("--news", action="store_true", help="用 Google 新聞頭條當題材（跳過寫過的）")
     args = parser.parse_args()
 
     db.init_db()
     n = max(1, min(args.n, 50))
+
+    headlines = []
+    if args.news:
+        seen = db.used_news_urls()
+        headlines = [h for h in news.fetch_headlines() if h["url"] not in seen][:n]
+        if not headlines:
+            print("沒有新的新聞可以寫")
+            return
+        n = len(headlines)
+
     for i in range(n):
-        article_id = generate_one(args.keyword, args.offline)
+        article_id = generate_one(args.keyword, args.offline, headlines[i] if headlines else None)
         print(f"[{i + 1}/{n}] 已產生文章 #{article_id}")
         if i < n - 1:
             time.sleep(args.sleep)

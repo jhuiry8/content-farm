@@ -27,14 +27,20 @@ def init_db():
             )
             """
         )
+        # 舊資料庫補上新聞欄位
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(articles)")}
+        for col in ("news_title", "news_url"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE articles ADD COLUMN {col} TEXT")
 
 
-def add_article(keyword, persona, title, content, source):
+def add_article(keyword, persona, title, content, source, news_title=None, news_url=None):
     with connect() as conn:
         cur = conn.execute(
-            "INSERT INTO articles (keyword, persona, title, content, source, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (keyword, persona, title, content, source, datetime.now().isoformat(timespec="seconds")),
+            "INSERT INTO articles (keyword, persona, title, content, source, news_title, news_url, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (keyword, persona, title, content, source, news_title, news_url,
+             datetime.now().isoformat(timespec="seconds")),
         )
         return cur.lastrowid
 
@@ -65,3 +71,8 @@ def keywords():
         return conn.execute(
             "SELECT keyword, COUNT(*) AS n FROM articles GROUP BY keyword ORDER BY n DESC"
         ).fetchall()
+
+
+def used_news_urls():
+    with connect() as conn:
+        return {r["news_url"] for r in conn.execute("SELECT news_url FROM articles WHERE news_url IS NOT NULL")}
