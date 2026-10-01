@@ -111,8 +111,9 @@ def generate_with_gemini(prompt):
                 if "429" in msg and "per day" not in msg and attempt == 0:
                     time.sleep(60)  # 每分鐘上限：等一分鐘再試同一個模型
                     continue
-                exhausted.add(model)  # 今天額度用完或這個模型不能用，換下一個
-                break
+                if "503" not in msg:  # 503 只是暫時忙線，下一篇還可以再試這個模型
+                    exhausted.add(model)  # 今天額度用完或這個模型不能用
+                break  # 這篇先換下一個模型
     return None
 
 
